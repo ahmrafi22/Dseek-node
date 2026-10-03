@@ -1,0 +1,34 @@
+{
+  "name": "deeperseeker",
+  "version": "1.0.0",
+  "description": "I am busy with exams so new PR and Issues might be slow to resolve or merge (but i would merge them or resolve the issue as I get time in between) so expect some inconvenience.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AmanCode22/deeperseeker.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/AmanCode22/deeperseeker/issues"
+  },
+  "homepage": "https://github.com/AmanCode22/deeperseeker#readme",
+  "dependencies": {
+    "better-sqlite3": "^13.0.3",
+    "cookie-parser": "^1.4.7",
+    "dotenv": "^18.0.5",
+    "express": "^5.2.1",
+    "ipaddr.js": "^2.5.0",
+    "mime-types": "^3.0.2",
+    "multer": "^2.4.0",
+    "nunjucks": "^3.2.4",
+    "pg": "^8.23.1",
+    "tokenizers": "^0.23.2"
+  }
+}

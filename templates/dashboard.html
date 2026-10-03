@@ -1,0 +1,268 @@
+{% extends "base.html" %}
+{% block title %}Dashboard - DeeperSeeker{% endblock %}
+{% block content %}
+{% set active_tokens = tokens|selectattr('status', 'equalto', 'ACTIVE')|list|length %}
+<div class="statusbar">
+    <span class="live"><span class="pulse"></span>Live</span>
+    <span class="meta"><strong>{{ active_tokens }}</strong> active token{{ "s" if active_tokens != 1 else "" }} of {{ tokens|length }}</span>
+    <span class="meta">model <code>deepseek-v4.1-flash</code></span>
+    <span class="meta">updated {{ now }}</span>
+</div>
+
+<div class="surface" style="margin:12px 0; padding:12px 16px;">
+    <div class="eyebrow">Cloud sync (Neon Postgres)</div>
+    {% if neonStatus %}
+        <p class="empty" style="margin:6px 0">
+            {% if neonStatus.connected %}Connected{% else %}Not connected{% endif %}
+            · queue depth: <strong id="neon-queue">{{ neonStatus.queueDepth }}</strong>
+            · flushed: <strong id="neon-flushed">{{ neonStatus.totalFlushed }}</strong>
+            {% if neonStatus.lastError %}· <span style="color:#e66">last error: {{ neonStatus.lastError }}</span>{% endif %}
+            {% if neonStatus.counts %}· rows: tokens {{ neonStatus.counts.tokens }}, sessions {{ neonStatus.counts.sessions }}, usage {{ neonStatus.counts.token_usage }}{% endif %}
+        </p>
+    {% else %}
+        <p class="empty" style="margin:6px 0">Status unavailable.</p>
+    {% endif %}
+    <button id="neon-upload" class="btn-sm">Upload all current data to Neon</button>
+    <button id="neon-view" class="btn-sm">View Neon data</button>
+    <span id="neon-msg" style="margin-left:10px; font-size:12px;"></span>
+    <script>
+    document.getElementById('neon-upload').addEventListener('click', async (e) => {
+        e.target.disabled = true;
+        const msg = document.getElementById('neon-msg');
+        msg.textContent = 'Uploading...';
+        try {
+            const r = await fetch('/admin/neon/upload-all', { method: 'POST' });
+            const j = await r.json();
+            msg.textContent = j.ok ? ('Uploaded: ' + j.tokens + ' tokens, ' + j.sessions + ' sessions, ' + j.token_usage + ' usage rows') : ('Failed: ' + j.error);
+        } catch (err) { msg.textContent = 'Error: ' + err.message; }
+        e.target.disabled = false;
+    });
+    document.getElementById('neon-view').addEventListener('click', async () => {
+        const w = window.open('', '_blank');
+        try {
+            const r = await fetch('/admin/neon/view');
+            const j = await r.json();
+            w.document.write('<pre>' + JSON.stringify(j, null, 2).replace(/&/g,'&amp;').replace(/</g,'&lt;') + '</pre>');
+        } catch (err) { w.document.write('Error: ' + err.message); }
+    });
+    </script>
+</div>
+
+<div class="shell">
+    <div class="col-scroll" tabindex="0" aria-label="Token usage">
+        {% if usage.totals and usage.totals.requests %}
+        {% set t = usage.totals %}
+        <section class="hero">
+            <div class="hero-top">
+                <div>
+                    <div class="eyebrow" style="margin-bottom:8px">Token flow · last {{ usage.days }} days</div>
+                    <div class="hero-total">{{ t.total_tokens | comma }}</div>
+                    <div class="hero-unit">tokens</div>
+                </div>
+                <span class="range">
+                    <a href="/dashboard?days=7" class="{% if days == 7 %}active{% endif %}">7d</a>
+                    <a href="/dashboard?days=14" class="{% if days == 14 %}active{% endif %}">14d</a>
+                    <a href="/dashboard?days=30" class="{% if days == 30 %}active{% endif %}">30d</a>
+                </span>
+            </div>
+            <div class="hero-meta">
+                <span class="cost"><strong>${{ t.cost | fixed(4) }}</strong> est. cost</span>
+                <span><strong>{{ t.requests }}</strong> request{{ "s" if t.requests != 1 else "" }}</span>
+                <span><strong>{{ t.prompt_tokens | comma }}</strong> in</span>
+                <span><strong>{{ t.completion_tokens | comma }}</strong> out</span>
+            </div>
+            <button class="numfmt-one" id="numfmt" title="Toggle number format: 1,000 → M">1,000</button>
+        </section>
+
+        <section>
+            <div class="eyebrow">Daily activity</div>
+            <div class="cards" style="margin-bottom:16px">
+                <div class="card accent-cyan">
+                    <div class="k">Input</div>
+                    <div class="v">{{ t.prompt_tokens | comma }}</div>
+                    <div class="s">sent upstream</div>
+                </div>
+                <div class="card accent-violet">
+                    <div class="k">Output</div>
+                    <div class="v">{{ t.completion_tokens | comma }}</div>
+                    <div class="s">reasoning {{ t.reasoning_tokens | comma }}</div>
+                </div>
+                <div class="card accent-amber">
+                    <div class="k">Cached*</div>
+                    <div class="v">{{ t.cached_tokens | comma }}</div>
+                    <div class="s">{{ cache_source }}</div>
+                </div>
+                <div class="card accent-green">
+                    <div class="k">Est. cost</div>
+                    <div class="v">${{ t.cost | fixed(4) }}</div>
+                    <div class="s">flat miss-rate pricing</div>
+                </div>
+            </div>
+
+    {% set in_pct = (t.prompt_tokens / t.total_tokens * 100) if t.total_tokens else 0 %}
+    {% set cache_pct = (t.cached_tokens / t.prompt_tokens * 100) if t.prompt_tokens else 0 %}
+    <div class="splitbar" title="Input {{ t.prompt_tokens | comma }} (cached {{ t.cached_tokens | comma }}) / Output {{ t.completion_tokens | comma }}">
+        <div class="in" style="width: {{ in_pct }}%"><div class="cache" style="width: {{ cache_pct | fixed(1) }}%"></div></div>
+        <div class="out" style="width: {{ 100 - in_pct }}%"></div>
+    </div>
+    <div class="split-legend">
+        <span><span class="sw in"></span>Input {{ in_pct | fixed(0) }}%</span>
+        <span><span class="sw out"></span>Output {{ 100 - in_pct | fixed(0) }}%</span>
+        <span><span class="sw cache"></span>Amber = cached {{ cache_pct | fixed(0) }}% of input ({{ cache_source }}) · billed at $0.003/M</span>
+    </div>
+
+            {% if usage.data %}
+            <div class="surface" style="margin-top:18px"></div>
+            <div class="depth-wrap chart-grid" style="margin-top:6px">
+                <div class="depth">
+                    {% for row in usage.data|reverse %}
+                    {% set h = (row.total_tokens / usage_max * 100) if usage_max else 0 %}
+                    {% set in_h = (row.prompt_tokens / row.total_tokens * 100) if row.total_tokens else 0 %}
+                    <div class="day-col{% if row.date == today %} today{% endif %}" title="{{ row.date }} · {{ row.model }} — in {{ row.prompt_tokens | comma }}, out {{ row.completion_tokens | comma }}, cached* {{ row.cached_tokens | comma }}, {{ row.requests }} req, ${{ row.cost | fixed(6) }}">
+                        <div class="bars">
+                    {% if row.total_tokens %}
+                    {% set cache_h = (row.cached_tokens / row.prompt_tokens * 100) if row.prompt_tokens else 0 %}
+                    <div class="col" style="height: {{ h if h > 2 else 2 | fixed(1) }}%">
+                        <div class="seg-in" style="height: {{ in_h | fixed(1) }}%"><div class="seg-cache" style="height: {{ cache_h | fixed(1) }}%"></div></div>
+                        <div class="seg-out" style="height: {{ 100 - in_h | fixed(1) }}%"></div>
+                    </div>
+                            {% else %}
+                            <div class="col empty" style="height: 100%"></div>
+                            {% endif %}
+                        </div>
+                        <div class="dv">{{ row.total_tokens | comma if row.total_tokens >= 1000 else row.total_tokens }}</div>
+                        <div class="dl">{% if row.date == today %}today{% else %}{{ row.date | dateShort }}{% endif %}</div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
+        </section>
+
+        <section>
+            <div class="eyebrow">Daily breakdown</div>
+            {% if usage.data %}
+            <div class="table-wrap table-scroll">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>Model</th>
+                            <th class="num">Reqs</th>
+                            <th class="num">Input</th>
+                            <th class="num">Cached*</th>
+                            <th class="num">Output</th>
+                            <th class="num">Reasoning</th>
+                            <th class="num">Total</th>
+                            <th class="num">Cost</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in usage.data %}
+                        <tr>
+                            <td>{{ row.date }}</td>
+                            <td><span class="model-tag">{{ row.model }}</span></td>
+                            <td class="num">{{ row.requests }}</td>
+                            <td class="num">{{ row.prompt_tokens | comma }}</td>
+                            <td class="num">{{ row.cached_tokens | comma }}</td>
+                            <td class="num">{{ row.completion_tokens | comma }}</td>
+                            <td class="num">{{ row.reasoning_tokens | comma }}</td>
+                            <td class="num"><strong>{{ row.total_tokens | comma }}</strong></td>
+                            <td class="num">${{ row.cost | fixed(6) }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p class="empty">No daily rows in this range.</p>
+            {% endif %}
+            <p class="footnote">* Cached ({{ cache_source }}){% if cache_source != 'heuristic' %} = operator assumption via <code>DEEPSEEKER_ASSUMED_CACHE_RATE</code> — asserted, NOT measured upstream{% else %} = local prefix-match heuristic against the previous prompt on the same chat — never a measured upstream cache hit{% endif %}. Output = per-turn delta of the backend's running <code>accumulated_token_usage</code> counter when sent, otherwise a tokenizer estimate. Machine-readable: <a href="/v1/usage?days={{ days }}">GET /v1/usage?days={{ days }}</a> (bearer key required).</p>
+        </section>
+        {% else %}
+        <section class="hero">
+            <div class="eyebrow">Token flow</div>
+            <p class="empty">No usage recorded yet — send a request through <code>/v1/chat/completions</code> and it will surface here.</p>
+        </section>
+        {% endif %}
+    </div>
+
+    <div class="col-scroll" tabindex="0" aria-label="Tokens and endpoints">
+        <section>
+            <div class="eyebrow">Auth tokens · {{ tokens|length }}</div>
+            <h3 class="sub">Add a token</h3>
+            <div class="steps">
+                <p><strong>Steps:</strong></p>
+                <ol>
+                    <li>Open <strong>incognito/private</strong> window</li>
+                    <li>Go to <a href="https://chat.deepseek.com" target="_blank">chat.deepseek.com</a> and login</li>
+                    <li>Open DevTools (F12) → Console → paste:</li>
+                </ol>
+                <code>JSON.parse(localStorage.getItem("userToken")).value</code>
+                <ol start="4">
+                    <li>Copy the token and paste below</li>
+                    <li><strong>Remove any surrounding quotes</strong> — paste only the raw token string</li>
+                    <li><strong>Close the incognito window</strong> to preserve the login</li>
+                </ol>
+            </div>
+            <div class="warning">
+                If you logout from DeepSeek in browser, this token stops working.
+            </div>
+            <form method="post" action="/tokens/add">
+                <input type="text" name="alias" placeholder="Alias (optional)" style="width:100%">
+                <input type="text" name="auth_token" placeholder="Paste auth token here (no quotes)" style="width:100%">
+                <button type="submit" style="width:100%">Add Token</button>
+            </form>
+            {% if tokens %}
+            <h3 class="sub">Saved tokens</h3>
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Alias</th>
+                            <th>Token</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for tok in tokens %}
+                        <tr>
+                            <td>{{ tok['id'] }}</td>
+                            <td>{{ tok['alias'] or '—' }}</td>
+                            <td><code>{{ tok.token | head(12) }}…{{ tok.token | tail(4) }}</code></td>
+                            <td>
+                                <span class="status {% if tok['status'] == 'ACTIVE' %}ok{% elif tok['status'] == 'RATE_LIMITED' %}warn{% else %}err{% endif %}">
+                                    {{ tok['status'] }}
+                                </span>
+                            </td>
+                            <td>
+                                <form method="post" action="/tokens/{{ tok['id'] }}/delete" style="display:inline"
+                                      onsubmit="return confirm('Delete?')">
+                                    <button type="submit" class="btn-sm btn-danger">Delete</button>
+                                </form>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p class="empty">No tokens yet.</p>
+            {% endif %}
+        </section>
+
+<script src="/static/dashboard.js?v=1"></script>
+        <section>
+            <div class="eyebrow">Endpoints</div>
+            <div class="api-grid">
+                <div class="api-box"><div class="k">OpenAI base</div><code>http://localhost:4000/v1</code></div>
+                <div class="api-box"><div class="k">Anthropic base</div><code>http://localhost:4000</code></div>
+                <div class="api-box"><div class="k">Usage JSON</div><code>GET /v1/usage?days=30</code></div>
+                <div class="api-box"><div class="k">Model</div><code>deepseek-v4.1-flash</code> · single default</div>
+            </div>
+        </section>
+    </div>
+</div>
+{% endblock %}

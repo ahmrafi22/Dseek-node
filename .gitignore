@@ -1,0 +1,10 @@
+aws_cookies_deepseek.json
+node_modules/
+__pycache__/
+deeperseeker.db
+*.db.bak
+*.db-shm
+*.db-wal
+.venv/
+.env
+.omo/
